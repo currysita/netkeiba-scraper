@@ -17,34 +17,34 @@ import org.apache.commons.io.FilenameUtils
 import java.io.File
 import java.io.StringReader
 import scalikejdbc._, SQLInterpolation._
- 
+
 object RaceScraper {
- 
+
   val mail = "enter your email address"
   val password = "enter your password"
-  
+
   def scrape() = {
-    
+
     val driver = new HtmlUnitDriver(false)
- 
+
     //login
     driver.get("https://account.netkeiba.com/?pid=login")
     driver.findElement(By.name("login_id")).sendKeys(mail)
     driver.findElement(By.name("pswd")).sendKeys(password+"\n")
- 
+
     val re = """/race/(\d+)/""".r
-    
+
     val nums =
       io.Source.fromFile("race_url.txt").getLines.toList.
     map{ s => val re(x) = re.findFirstIn(s).get; x }
- 
-    val urls = nums.map(s => "http://db.netkeiba.com/race/" + s)
- 
+
+    val urls = nums.map(s => "https://db.netkeiba.com/race/" + s)
+
     val folder = new File("html")
     if (!folder.exists()) folder.mkdir()
- 
+
     var i = 0
- 
+
     nums.zip(urls).map{ case (num, url) =>
       i += 1
       println(""+i+":downloading "+url)
@@ -58,27 +58,27 @@ object RaceScraper {
       }
     }
   }
- 
+
 }
- 
+
 object RowExtractor {
 
   def str2raceInfo(race_info: Array[String]): RaceInfo = {
     val DateRe(d) = race_info(8)
-    RaceInfo(race_info(0), 
-	 race_info(1), 
-	 race_info(2).toInt, 
-	 race_info(3), 
-	 race_info(4), 
-	 race_info(5), 
-	 race_info(6).toInt, 
-	 Try(race_info(7).toInt).toOption, 
-	 Util.date2sqliteStr(d), 
-	 race_info(9), 
+    RaceInfo(race_info(0),
+	 race_info(1),
+	 race_info(2).toInt,
+	 race_info(3),
+	 race_info(4),
+	 race_info(5),
+	 race_info(6).toInt,
+	 Try(race_info(7).toInt).toOption,
+	 Util.date2sqliteStr(d),
+	 race_info(9),
 	 race_info(10))
   }
- 
-  def str2raceResult(race_id: Int, race_result: Array[String]): RaceResult = { 
+
+  def str2raceResult(race_id: Int, race_result: Array[String]): RaceResult = {
     RaceResult(race_id,
 	 race_result(0),
 	 race_result(1).toInt,
@@ -112,19 +112,23 @@ object RowExtractor {
     hp.parse(new InputSource(new StringReader(html)))
     saxer.rootElem
   }
-	
+
+  /**
+    * HTMLソースを解析して、各テーブルにInsert実行する。
+    * @param s
+    */
   def extract()(implicit s: DBSession) = {
- 
+
     val files = new File("html").listFiles().reverse
- 
+
     val entityId = """<a href="/\w+/(\d+)/"[^>]*>[^<]*</a>"""
- 
+
     val oikiriIconLink =
       """<a href="/\?pid=horse_training&amp;id=\d+&amp;rid=\d+"><img src="/style/netkeiba.ja/image/ico_oikiri.gif" border="0" height="13" width="13"/></a>"""
- 
+
     val commentIconLink =
       """<a href="/\?pid=horse_comment&amp;id=\d+&amp;rid=\d+"><img src="/style/netkeiba.ja/image/ico_comment.gif" border="0" height="13" width="13"/></a>"""
- 
+
     def clean(s: String) = {
       s.replaceAll("<span>|</span>|<span/>", "").
       replaceAll(",", "").
@@ -132,7 +136,7 @@ object RowExtractor {
       replaceAll(oikiriIconLink, "").
       replaceAll(commentIconLink, "")
     }
- 
+
     val usefulFiles =
       files.
       //タイム指数が表示される2006年以降のデータだけ使う
@@ -142,41 +146,41 @@ object RowExtractor {
       filter(file => FilenameUtils.getBaseName(file.getName) != "200808020399").
       toArray.
       reverse
- 
+
     var i = 0
- 
+
     while (i < usefulFiles.size) {
-      
+
       val file = usefulFiles(i)
       i += 1
 
       val lines = io.Source.fromFile(file).getLines.toList
- 
+
       val rdLines = {
 	lines.
 	dropWhile(!_.contains("<dl class=\"racedata fc\">")).
 	takeWhile(!_.contains("</dl>"))
       }
- 
+
       val rdHtml = rdLines.mkString + "</dl>"
 
       val (condition, name) = {
 	val elem = parseHtml(rdHtml)
-      
+
 	val condition = elem.\\("span").text
 	val name = elem.\\("h1").text
 	(condition, name)
       }
-      
+
       val round = file.getName.replace(".html", "").takeRight(2)
-      
+
       def extractDateInfo(lines: Seq[String]) = {
 	lines.
         toList.
         dropWhile(!_.contains("<p class=\"smalltxt\">")).
         tail.head.replaceAll("<[^>]+>","")
       }
-      
+
       val dateInfo = extractDateInfo(lines).trim
 
       val fieldScore = Try{
@@ -185,21 +189,21 @@ object RowExtractor {
           dropWhile(!_.contains("class=\"result_table_02\"")).
           takeWhile(!_.contains("</table>"))
         }
- 
+
 	val rt2Html = rt2Lines.mkString + "</table>"
 
 	val text = parseHtml(rt2Html).\\("td").head.text
         text.filter(_ != '?').replaceAll("\\(\\s*\\)", "").trim.toInt.toString
       }.getOrElse("")
- 
+
       val rt1Lines = {
 	lines.
 	dropWhile(s => !s.contains("race_table_01")).
 	takeWhile(s => !s.contains("/table"))
       }
- 
+
       val rt1Html = rt1Lines.mkString.drop(17) + "</table>"
- 
+
       val conditions = {
         condition.
         split("/").
@@ -212,18 +216,18 @@ object RowExtractor {
         (conditions.head.
         replaceAll(" ", "").
         replaceAll("([^\\d]+)(\\d+)m","$1,$2") +: conditions.tail) ++
-        Array(round.split(" ").head, fieldScore) ++ 
+        Array(round.split(" ").head, fieldScore) ++
         { val di = dateInfo.split(" ")
           di.take(2) :+ di.drop(2).mkString(" ") }).
         map(_.filter(_ != '?').replaceAll("(^\\h*)|(\\h*$)","")).
         mkString(",").split(",")
 
       val raceInfo = str2raceInfo(raceInfoStr)
-
+      // race_infoテーブルへInsert
       RaceInfoDao.insert(raceInfo)
 
       val lastRowId = RaceInfoDao.lastRowId()
-      
+
       val payoffLines = {
 	lines.
 	dropWhile(!_.contains("<dl class=\"pay_block\">")).
@@ -232,7 +236,7 @@ object RowExtractor {
       val payoffHtml =
 	payoffLines.mkString + "</dl>"
       val payoffs = {
-	parseHtml(payoffHtml).\\("tr").map{ tr => 
+	parseHtml(payoffHtml).\\("tr").map{ tr =>
           val ticketType = tr.\\("th").text.trim
           tr.\\("td").map(_.toString.replaceAll("</?td[^>]*>","").split("<br/>").map(_.trim.replaceAll(",",""))).transpose.
           map((ticketType, _))
@@ -251,7 +255,7 @@ object RowExtractor {
       payoffs.foreach(PayoffDao.insert)
 
       Try{
-	parseHtml(rt1Html).\\("tr").tail 
+	parseHtml(rt1Html).\\("tr").tail
       }.foreach{ xs =>
 	xs.map(_.\\("td").map(_.child.mkString).map(clean)).
 	foreach{ line =>
@@ -267,36 +271,45 @@ object RowExtractor {
         }
       }
     }
+    ///接続を閉じて、変更を更新する。SQLiteと違ってこれがないとちゃんと保存されない。
+    sql"""commit;""".execute.apply
+    sql"""shutdown;""".execute.apply
   }
- 
+
 }
- 
+
 object RaceListScraper {
-  
+
   def extractRaceList(baseUrl: String) = {
-    "/race/list/\\d+/".r.findAllIn(io.Source.fromURL(baseUrl, "EUC-JP").mkString).toList.
-    map("http://db.netkeiba.com" + _).
+    var source = io.Source.fromURL(baseUrl, "EUC-JP").mkString
+    "/race/list/\\d+/".r.findAllIn(source).toList.
+    map("https://db.netkeiba.com" + _).
     distinct
   }
- 
-  def extractPrevMonth(baseList: String) = {
+
+  def extractPrevMonth(baseList: String): String = {
+    var urlSource = io.Source.fromURL(baseList, "EUC-JP")
+    var lineList =  urlSource.getLines.filter(_.contains("race_calendar_rev_02.gif")).toList
+    if (lineList.isEmpty){
+      return """"""
+    }
     "/\\?pid=[^\"]+".r.findFirstIn(
       io.Source.fromURL(baseList, "EUC-JP").
       getLines.filter(_.contains("race_calendar_rev_02.gif")).toList.head).
-    map("http://db.netkeiba.com" + _).
+    map("https://db.netkeiba.com" + _).
     get
   }
- 
+
   def extractRace(listUrl: String) = {
     "/race/\\d+/".r.findAllIn(io.Source.fromURL(listUrl, "EUC-JP").mkString).toList.
-    map("http://db.netkeiba.com" + _).
+    map("https://db.netkeiba.com" + _).
     distinct
   }
- 
+
   def scrape(period: Int) = {
-    var baseUrl = "http://db.netkeiba.com/?pid=race_top"
+    var baseUrl = "https://db.netkeiba.com/?pid=race_top"
     var i = 0
- 
+
     while (i < period) {
       Thread.sleep(1000)
       val raceListPages =
@@ -306,19 +319,19 @@ object RaceListScraper {
           Thread.sleep(1000)
           extractRace(url)
         }.flatten
-      
+
       racePages.foreach{ url =>
 	FileUtils.writeStringToFile(new File("race_url.txt"), url + "\n", true)
       }
- 
+
       baseUrl = extractPrevMonth(baseUrl)
       println(i + ": collecting URLs from " + baseUrl)
       i += 1
     }
   }
- 
+
 }
- 
+
 case class RaceInfo(
   race_name: String,
   surface: String,
@@ -338,41 +351,39 @@ object RaceInfoDao {
   def createTable()(implicit s: DBSession) = {
     sql"""
 create table if not exists race_info (
-  id integer primary key autoincrement,
+  id integer identity primary key,
 
-  race_name     text    not null,
-  surface       text    not null,
+  race_name     varchar(100)  not null,
+  surface       varchar(10)   not null,
   distance      integer not null,
-  weather       text    not null,
-  surface_state text    not null,
+  weather       varchar(10)   not null,
+  surface_state varchar(100)  not null,
 
-  race_start    text    not null,
+  race_start    varchar(10)    not null,
   race_number   integer not null,
 
   surface_score integer,
-  date          text    not null,
-  place_detail  text    not null,
-  race_class    text    not null
+  date          date  not null,
+  place_detail  varchar(100)  not null,
+  race_class    varchar(100)  not null
 );""".execute.apply
 
-    sql"""
-create index 
-  date_idx
-on
-  race_info (date);
-""".execute.apply
-
-    sql"""
-create index 
-  id_date_idx 
-on
-  race_info (id, date);
-""".execute.apply
+    //インデクスの作成。例外が発生しても潰す。2度め以降の実行だと例外発生しちゃうので。
+    try{
+      sql"""
+      create index
+        date_idx
+      on
+        race_info (date);
+      """.execute.apply
+    }catch{
+      case e:Exception => println("race_info.data_idx 作成時にエラーが発生しました")
+    }
   }
 
   def insert(ri: RaceInfo)(implicit s: DBSession) = {
     sql"""
-insert or replace into race_info (
+insert into race_info (
   race_name,
   surface,
   distance,
@@ -402,13 +413,16 @@ insert or replace into race_info (
 
   def lastRowId()(implicit s: DBSession): Int = {
     sql"""
-select last_insert_rowid() as last_rowid
+         SELECT top 1 Id last_rowid FROM race_info order by id desc;
 """.map(_.int("last_rowid")).single.apply().get
+//    sql"""
+//select last_insert_rowid() as last_rowid
+//""".map(_.int("last_rowid")).single.apply().get
   }
-  
+
   def getById(id: Int)(implicit s: DBSession): RaceInfo = {
     sql"""select * from race_info where id = ${id}""".
-    map{ x => 
+    map{ x =>
       RaceInfo(
         race_name = x.string("race_name"),
         surface = x.string("surface"),
@@ -424,7 +438,7 @@ select last_insert_rowid() as last_rowid
       )
     }.single.apply().get
   }
-  
+
 }
 
 case class RaceResult(
@@ -451,12 +465,12 @@ case class RaceResult(
   owner_id: String,
   earning_money: Option[Double]
 )
- 
+
 object DateRe {
-  
+
   val dateRe =
     "(\\d\\d\\d\\d)年(\\d\\d?)月(\\d\\d?)日".r
- 
+
   def unapply(s: String) = {
     s match {
       case dateRe(y, m, d) =>
@@ -467,9 +481,9 @@ object DateRe {
         None
     }
   }
-  
+
 }
- 
+
 object RaceResultDao {
 
   def createTable()(implicit s: DBSession) = {
@@ -477,72 +491,94 @@ object RaceResultDao {
 create table if not exists race_result (
   race_id integer not null,
 
-  order_of_finish text    not null,
-  frame_number       integer not null,
-  horse_number       integer not null,
-  horse_id           text    not null,
-  sex                text    not null,
-  age                integer not null,
-  basis_weight       real    not null,
-  jockey_id          text    not null,
-  finishing_time     text    not null,
-  length             text    not null,
-  speed_figure       integer,
-  pass               text    not null,
-  last_phase         real,
-  odds               real,
-  popularity         integer,
-  horse_weight       text    not null,
-  remark             text,
-  stable             text    not null,
-  trainer_id         text    not null,
-  owner_id           text    not null,
-  earning_money      real,
+  order_of_finish varchar(10)    not null,
+  frame_number       int not null,
+  horse_number       int not null,
+  horse_id           varchar(10)    not null,
+  sex                varchar(10)    not null,
+  age                int not null,
+  basis_weight       float    not null,
+  jockey_id          varchar(10)    not null,
+  finishing_time     varchar(10)    not null,
+  length             varchar(10)    not null,
+  speed_figure       int,
+  pass               varchar(100)    not null,
+  last_phase         float,
+  odds               float,
+  popularity         int,
+  horse_weight       varchar(100)    not null,
+  remark             varchar(500),
+  stable             varchar(100)    not null,
+  trainer_id         varchar(100)    not null,
+  owner_id           varchar(100)    not null,
+  earning_money      float,
   primary key (race_id, horse_number),
   foreign key (race_id) references race_info (id)
 );""".execute.apply
 
-    sql"""
-create index 
-  race_id_idx 
-on
-  race_result (race_id);
-""".execute.apply
+    //インデクスの作成。例外が発生しても潰す。2度め以降の実行だと例外発生しちゃうので。
+    try {
+      sql"""
+        create index
+          race_id_idx
+        on
+          race_result (race_id);
+      """.execute.apply
+    }catch{
+      case e:Exception => println("index race_id_idx error")
+    }
 
-    sql"""
-create index 
-  race_id_horse_id_idx 
+    try {
+      sql"""
+create index
+  race_id_horse_id_idx
 on
   race_result (race_id, horse_id);
 """.execute.apply
 
-    sql"""
-create index 
-  race_id_jockey_id_idx 
+    }catch{
+      case e:Exception => println("index race_id_horse_id_idx error")
+    }
+
+    try{
+      sql"""
+create index
+  race_id_jockey_id_idx
 on
   race_result (race_id, jockey_id);
 """.execute.apply
 
-    sql"""
-create index 
-  race_id_trainer_id_idx 
+    }catch{
+      case e:Exception => println("indexrace_id_jockey_id_idx error")
+    }
+
+    try{
+      sql"""
+create index
+  race_id_trainer_id_idx
 on
   race_result (race_id, trainer_id);
 """.execute.apply
-
-    sql"""
-create index 
-  race_id_owner_id_idx 
+    }catch{
+      case e:Exception => println("race_id_trainer_id_idx error")
+    }
+    try{
+      sql"""
+create index
+  race_id_owner_id_idx
 on
   race_result (race_id, owner_id);
 """.execute.apply
+    }catch{
+      case e:Exception => println("race_id_owner_id_idx error")
+    }
   }
-    
+
   def insert(rr: RaceResult)(implicit s: DBSession) = {
     sql"""
-insert or replace into race_result (
+insert into race_result (
   race_id,
-  
+
   order_of_finish,
   frame_number,
   horse_number,
@@ -591,7 +627,7 @@ insert or replace into race_result (
 )
 """.update.apply()
   }
-  
+
 }
 
 case class Payoff(
@@ -609,8 +645,8 @@ object PayoffDao {
 create table if not exists payoff (
   race_id      integer not null,
   ticket_type  integer not null check(ticket_type between 0 and 7),
-  horse_number text    not null,
-  payoff       real    not null check(payoff >= 0),
+  horse_number varchar(100) not null,
+  payoff       float    not null check(payoff >= 0),
   popularity   integer not null check(popularity >= 0),
   primary key (race_id, ticket_type, horse_number),
   foreign key (race_id) references race_info (id)
@@ -620,7 +656,7 @@ create table if not exists payoff (
 
   def insert(dto: Payoff)(implicit s: DBSession) = {
     sql"""
-insert or replace into payoff (
+insert into payoff (
   race_id,
   ticket_type,
   horse_number,
@@ -637,21 +673,21 @@ insert or replace into payoff (
   }
 
 }
- 
+
 object FeatureGenerator {
- 
+
   def iterator()(implicit s: DBSession): Iterator[FeatureGenerator] = {
-    
+
     val race_infos = {
       sql"select race_id, horse_number from race_result".
       map(rs => (rs.int("race_id"), rs.int("horse_number"))).
       list.
       apply
     }
-      
+
     var count = 0
     val totalCount = race_infos.size.toDouble
- 
+
     race_infos.
     toIterator.
     map{ case (race_id, horse_number) =>
@@ -661,9 +697,9 @@ object FeatureGenerator {
       new FeatureGenerator(race_id, horse_number)
     }
   }
-  
+
 }
- 
+
 class FeatureGenerator(
   val race_id: Int,
   val horse_number: Int
@@ -688,7 +724,7 @@ class FeatureGenerator(
   val grade = Util.str2cls(race_class)
 
   val surfaceScore = surface_score
-    
+
   val order_of_finish =
     sql"""
 select 
@@ -703,7 +739,7 @@ and
   single.
   apply().
   get
-    
+
   val horse_id =
     sql"""
 select
@@ -718,7 +754,7 @@ and
   single.
   apply().
   get
-  
+
   val jockey_id =
     sql"""
 select
@@ -733,8 +769,8 @@ and
   single.
   apply().
   get
-  
-  val trainer_id = 
+
+  val trainer_id =
     sql"""
 select 
   trainer_id
@@ -748,8 +784,8 @@ and
   single.
   apply().
   get
-  
-  val owner_id = 
+
+  val owner_id =
     sql"""
 select
   owner_id
@@ -763,7 +799,7 @@ and
   single.
   apply().
   get
-    
+
   //Speed rating for the previous race in which the horse ran
   val preSRa = {
     sql"""
@@ -787,7 +823,7 @@ limit 1
     single.
     apply()
   }
- 
+
   //The average of a horse’s speed rating in its last 4 races; value of zero when there is no past run
   val avgsr4 = {
     val srs =
@@ -811,13 +847,13 @@ limit 4
 """.map(_.double("speed_figure")).
     list.
     apply()
-    
+
     if (srs.isEmpty)
       None
     else
       Some(srs.sum / srs.size)
   }
- 
+
   val avgWin4 = {
     val wins =
     sql"""
@@ -840,13 +876,13 @@ limit 4
 """.map(_.double("is_win")).
     list.
     apply()
-    
+
     if (wins.isEmpty)
       None
     else
       Some(wins.sum / wins.size)
   }
- 
+
   //The average speed rating of the past runs of each horse at this distance; value of zero when no previous run
   val disavesr = {
     val srs =
@@ -872,13 +908,13 @@ limit 100
 """.map(_.double("speed_figure")).
     list.
     apply()
- 
+
     if (srs.isEmpty)
       None
     else
       Some(srs.sum / srs.size)
   }
- 
+
   val disRoc = {
     val distances =
       sql"""
@@ -898,7 +934,7 @@ limit 100
 """.map(_.double("distance")).
     list.
     apply()
- 
+
     if (distances.isEmpty)
       None
     else {
@@ -906,7 +942,7 @@ limit 100
       Some((distance - mean) / mean)
     }
   }
- 
+
   //Total prize money earnings (finishing first, second or third) to date/Number of races entered
   val eps = {
     val earning_money =
@@ -928,13 +964,13 @@ limit 100
 """.map(_.doubleOpt("earning_money")).
     list.
     apply()
- 
+
     if (earning_money.isEmpty)
       None
     else
       Some(earning_money.flatten.sum / earning_money.size)
   }
-  
+
   //Weight carried by the horse in current race
   val weight = {
     sql"""
@@ -951,7 +987,7 @@ and
     apply.
     get
   }
- 
+
   val hweight = {
     Try{
       sql"""
@@ -971,7 +1007,7 @@ and
       toInt
     }.toOption
   }
- 
+
   val dhweight = {
     Try{
       sql"""
@@ -991,7 +1027,7 @@ and
       toInt
     }.toOption
   }
- 
+
   //The percentage of the races won by the horse in its career
   val winRun = {
     val wins =
@@ -1012,13 +1048,13 @@ limit 100
 """.map(_.int("is_win")).
     list.
     apply
- 
+
     if (wins.isEmpty)
       None
     else
       Some(wins.sum.toDouble / wins.size)
   }
- 
+
   //The winning percentage of the trainer in career to date of race
   val twinper = {
     val wins =
@@ -1040,13 +1076,13 @@ limit 100
 """.map(_.int("is_win")).
     list.
     apply
- 
+
     if (wins.isEmpty)
       None
     else
       Some(wins.sum.toDouble / wins.size)
   }
- 
+
   //The winning percentage of the owner in career to date of race
   val owinper = {
     val wins =
@@ -1068,13 +1104,13 @@ limit 100
 """.map(_.int("is_win")).
     list.
     apply
- 
+
     if (wins.isEmpty)
       None
     else
       Some(wins.sum.toDouble / wins.size)
   }
-  
+
   //The winning percentage of the jockey in career to date of race
   val age = {
     sql"""
@@ -1091,7 +1127,7 @@ and
     apply.
     get
   }
- 
+
   val dsl = {
     sql"""
 select 
@@ -1114,15 +1150,15 @@ limit 1
     single.
     apply()
   }
- 
+
   val surface = {
     Util.surface(rawSurface)
   }
- 
-  val weather = { 
+
+  val weather = {
     Util.weather(rawWeather)
   }
-  
+
   val sex = {
     val state = sql"""
 select 
@@ -1137,10 +1173,10 @@ and
     single.
     apply.
     get
- 
+
     Util.sex(state)
   }
-  
+
   val enterTimes = {
     sql"""
 select
@@ -1160,7 +1196,7 @@ and
     apply.
     get
   }
- 
+
   val odds = {
     sql"""
 select 
@@ -1176,7 +1212,7 @@ and
     apply.
     get
   }
-  
+
   //Total prize money earnings (finishing first, second or third) to date/Number of races entered
   val jEps = {
     val earning_money =
@@ -1198,7 +1234,7 @@ limit 100
 """.map(_.doubleOpt("earning_money")).
     list.
     apply()
- 
+
     if (earning_money.isEmpty)
       None
     else
@@ -1227,7 +1263,7 @@ limit 4
 """.map(_.double("is_win")).
     list.
     apply()
-    
+
     if (wins.isEmpty)
       None
     else
@@ -1235,9 +1271,9 @@ limit 4
   }
 
   val month = {
-    date.split("-")(1) 
+    date.split("-")(1)
   }
-  
+
   //The winning percentage of the jockey in career to date of race
   val jwinper = jWinperOf(jockey_id)
 
@@ -1292,7 +1328,7 @@ limit 1
        winper <- jwinper
      } yield preJockeyId != jockey_id && preWinper < winper)
   }
-  
+
   val preOOF =
     sql"""
 select 
@@ -1362,13 +1398,13 @@ limit 100
     val diff =
     orders.filter(_._1.forall(c => '0' < c && c < '9')).
     filterNot(_._2.isEmpty).
-    map{ case (order_of_finish, pass) => 
+    map{ case (order_of_finish, pass) =>
       val xs = pass.split("-")
       xs.map(_.toInt).sum.toDouble / xs.size - order_of_finish.toInt }
 
     diff.sum / diff.size
   }
-  
+
   val preLateStart = {
     val preRemark = sql"""
 select 
@@ -1412,7 +1448,7 @@ limit 100
 """.map(_.intOpt("is_late").getOrElse(0)).
     list.
     apply()
-    
+
     lateList.sum.toDouble / lateList.size
   }
 
@@ -1435,7 +1471,7 @@ limit 1
 """.map(_.doubleOpt("last_phase")).
     single.
     apply().
-    flatten    
+    flatten
   }
 
 
@@ -1471,7 +1507,7 @@ where
     apply.
     get
   }
-  
+
   private val preRaceIdOpt = sql"""
 select 
   race_id
@@ -1506,14 +1542,14 @@ where
       get
     }
   }
-  
+
   val surfaceChanged = {
     for { pre_race_id <- preRaceIdOpt } yield {
       val info = RaceInfoDao.getById(pre_race_id)
       surface != Util.surface(info.surface)
     }
   }
-  
+
   val gradeChanged = {
     for { pre_race_id <- preRaceIdOpt } yield {
       val info = RaceInfoDao.getById(pre_race_id)
@@ -1548,9 +1584,9 @@ limit 1
     race_class.contains("牝")
   }
 }
- 
+
 object FeatureDao {
- 
+
   def createTable()(implicit s: DBSession) = {
     sql"""
 create table if not exists feature (
@@ -1559,7 +1595,7 @@ create table if not exists feature (
 
   grade integer not null,
   order_of_finish integer,
-  
+
   horse_id text not null,
   jockey_id text not null,
   trainer_id text not null,
@@ -1603,7 +1639,7 @@ create table if not exists feature (
 
   headCount real,
   preHeadCount real,
-  
+
   surfaceChanged real,
   gradeChanged real,
 
@@ -1614,16 +1650,16 @@ create table if not exists feature (
 );
 """.execute.apply
   }
- 
+
   def insert(fg: FeatureGenerator)(implicit s: DBSession) = {
     import Util.position2cls
     sql"""
-insert or replace into feature (
+insert into feature (
   race_id,
   horse_number,
   grade,
   order_of_finish,
-  
+
   horse_id,
   jockey_id,
   trainer_id,
@@ -1664,10 +1700,10 @@ insert or replace into feature (
   lateStartPer,
   course,
   placeCode,
-  
+
   headCount,
   preHeadCount,
-  
+
   surfaceChanged,
   gradeChanged,
   preMargin,
@@ -1727,14 +1763,14 @@ insert or replace into feature (
   ${fg.gradeChanged},
   ${fg.preMargin},
   ${fg.femaleOnly}
-  
+
 )
 """.update.apply
   }
- 
+
   def rr2f() = {
     DB.readOnly{ implicit s =>
-      val fgs = 
+      val fgs =
         FeatureGenerator.iterator()
       fgs.grouped(1000).foreach{ fgs =>
         //1000回インサートする度にコミットする
@@ -1744,43 +1780,43 @@ insert or replace into feature (
       }
     }
   }
- 
+
 }
- 
+
 object Util {
- 
+
 //weatherの種類
 //List(晴, 曇, 雨, 小雨, 雪)
- 
+
 //surfaceの種類
 //List(芝右, ダ右, 障芝, 芝右 外, 障芝 ダート, ダ左, 芝左, 障芝 外, 芝左 外, 芝直線, 障芝 外-内, 障芝 内-外, 芝右 内2周)
- 
+
 //sexの種類
 //List(牡, 牝, セ)
- 
+
   private val weatherState =
     Seq("晴", "曇", "雨", "小雨", "雪")
-  
+
   def weather(s: String): String = {
     weatherState.map{ state =>
       if (s == state) return state
     }
     return "他"
   }
- 
+
   private val surfaceState =
     Seq("芝", "ダ")
- 
+
   def surface(s: String): String = {
     surfaceState.foreach { state =>
       if (s.contains(state)) return state
     }
     return "他"
   }
- 
+
   private val sexState =
     Seq("牡", "牝", "セ")
- 
+
   def sex(s: String): String = {
     sexState.map{ state =>
       if (s == state) return state
@@ -1838,7 +1874,7 @@ object Util {
       cal.get(Calendar.MONTH)+1,
       cal.get(Calendar.DAY_OF_MONTH))
   }
- 
+
   val str2clsMap =
     Array(
       "オープン",
@@ -1847,13 +1883,13 @@ object Util {
       "500万下",
       "未勝利",
       "新馬").zipWithIndex
- 
+
   def str2cls(s: String): Int = {
     str2clsMap.foreach{ case (a, b) =>
       if (s.contains(a)) return b }
     sys.error("class not found:"+s)
   }
- 
+
   val positionState =
     Array(
       "(降)",
@@ -1863,7 +1899,7 @@ object Util {
       "失",
       "除"
     ).zipWithIndex
- 
+
   def position2cls(s: String): (Option[Int], Option[Int]) = {
     positionState.foreach{ case (a, b) =>
       if (s.contains(a))
@@ -1871,7 +1907,7 @@ object Util {
     }
     (Try(s.replaceAll("[^\\d]", "").toInt).toOption, None)
   }
- 
+
   val surfaceStates =
     Array(
       "ダート : 稍重",
@@ -1882,10 +1918,10 @@ object Util {
       "芝 : 稍重",
       "芝 : 重",
       "芝 : 不良")
-  
+
   val startTimeFormat = new SimpleDateFormat("hh:mm")
   val finishingTimeFormat = new SimpleDateFormat("m:ss.S")
-  
+
   val example =
     Array[Any](
   //race_name
@@ -1944,7 +1980,7 @@ object Util {
   "466(+4)",
   //text
   "",
-  //text 
+  //text
   "",
   //text remark
   "出遅れ",
@@ -1957,24 +1993,28 @@ object Util {
   //real earning_money
   730.0
     )
- 
+
 }
 
 object Main {
 
   def init() = {
-    Class.forName("org.sqlite.JDBC")
-    ConnectionPool.singleton("jdbc:sqlite:race.db", null, null)
+    // JDBCドライバの読み込み。なぜか失敗する場合は、sbtのコンパイルとかやりなおしてみてください。完全な対処法は不明。
+    Class.forName("org.hsqldb.jdbc.JDBCDriver")
+    // file:の後の文字列がscriptファイル、propertiesファイルの名前になる。lckファイルやtmpディレクトリは一時的に作成されるもの。
+    ConnectionPool.singleton("jdbc:hsqldb:file:race_hsql.db", "sa", null)
   }
 
   def main(args: Array[String]): Unit = {
     args.headOption match {
-      case Some("collecturl") => 
+      case Some("collecturl") =>
         //過去10年分のURLを収集する
-        RaceListScraper.scrape(period = 12 * 10)
-      case Some("scrapehtml") => 
+//        RaceListScraper.scrape(period = 12 * 10)
+        //サンプル用に2ヶ月分にしています。
+        RaceListScraper.scrape(period = 2 * 1)
+      case Some("scrapehtml") =>
         RaceScraper.scrape()
-      case Some("extract") => 
+      case Some("extract") =>
         init()
         DB.localTx { implicit s =>
           RaceInfoDao.createTable()
