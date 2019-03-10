@@ -1,4 +1,5 @@
-libraryDependencies += "org.xerial" % "sqlite-jdbc" % "3.7.2"
+// https://mvnrepository.com/artifact/org.hsqldb/hsqldb
+libraryDependencies += "org.hsqldb" % "hsqldb" % "2.4.1"
 
 libraryDependencies += "joda-time" % "joda-time" % "2.3"
 
@@ -13,6 +14,7 @@ libraryDependencies += "org.seleniumhq.selenium" % "selenium-java" % "2.41.0"
 libraryDependencies += "commons-lang" % "commons-lang" % "2.6"
 
 libraryDependencies ++= Seq(
-  "org.scalikejdbc" %% "scalikejdbc"       % "2.0.7",
-  "ch.qos.logback"  %  "logback-classic"   % "1.1.2"
+  "org.scalikejdbc" %% "scalikejdbc"       % "2.5.2",
+  "ch.qos.logback"  %  "logback-classic"   % "1.1.2",
+  "org.scala-lang.modules" %% "scala-xml" % "1.1.1"
 )
