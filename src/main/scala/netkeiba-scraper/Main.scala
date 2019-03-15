@@ -38,7 +38,7 @@ object RaceScraper {
       io.Source.fromFile("race_url.txt").getLines.toList.
     map{ s => val re(x) = re.findFirstIn(s).get; x }
  
-    val urls = nums.map(s => "http://db.netkeiba.com/race/" + s)
+    val urls = nums.map(s => "https://db.netkeiba.com/race/" + s)
  
     val folder = new File("html")
     if (!folder.exists()) folder.mkdir()
@@ -78,31 +78,35 @@ object RowExtractor {
 	 race_info(10))
   }
  
-  def str2raceResult(race_id: Int, race_result: Array[String]): RaceResult = { 
-    RaceResult(race_id,
-	 race_result(0),
-	 race_result(1).toInt,
-	 race_result(2).toInt,
-	 race_result(3).split("horse/")(1).takeWhile(_ != '/'),
-	 race_result(4),
-	 race_result(5).toInt,
-	 race_result(6).toDouble,
-	 race_result(7).split("jockey/")(1).takeWhile(_ != '/'),
-	 race_result(8),
-	 race_result(9),
-	 Try(race_result(10).toInt).toOption,
-	 race_result(11),
-	 Try(race_result(12).toDouble).toOption,
-	 Try(race_result(13).toDouble).toOption,
-	 Try(race_result(14).toInt).toOption,
-	 race_result(15),
-	 { val remark = race_result(18)
+  def str2raceResult(race_id: Int, race_result: Array[String]): RaceResult = {
+    val horse_id = race_result(3).split("horse/")(1).takeWhile(_ != '/'); //hourse_id
+    val horse_name = race_result(3).split(">")(1).takeWhile(_ != '<') //horse_name
+    RaceResult(
+      race_id,
+      race_result(0),  //order_of_finish
+	    race_result(1).toInt,  //frame_number
+	    race_result(2).toInt,  //horse_number
+      horse_id,
+      horse_name,
+      race_result(4),
+	    race_result(5).toInt,
+	    race_result(6).toDouble,
+	    race_result(7).split("jockey/")(1).takeWhile(_ != '/'),
+	    race_result(8),
+	    race_result(9),
+	    Try(race_result(10).toInt).toOption,
+	    race_result(11),
+	    Try(race_result(12).toDouble).toOption,
+	    Try(race_result(13).toDouble).toOption,
+	    Try(race_result(14).toInt).toOption,
+	    race_result(15),
+	    { val remark = race_result(18)
            if (remark.isEmpty) None else Some(remark) },
-	 race_result(19),
-	 race_result(20).split("trainer/")(1).takeWhile(_ != '/'),
-	 race_result(21).split("owner/")(1).takeWhile(_ != '/'),
-	 Try(race_result(22).toDouble).toOption
-       )
+	    race_result(19),
+	    race_result(20).split("trainer/")(1).takeWhile(_ != '/'),
+	    race_result(21).split("owner/")(1).takeWhile(_ != '/'),
+	    Try(race_result(22).toDouble).toOption
+    )
   }
 
   private def parseHtml(html: String) = {
@@ -275,7 +279,7 @@ object RaceListScraper {
   
   def extractRaceList(baseUrl: String) = {
     "/race/list/\\d+/".r.findAllIn(io.Source.fromURL(baseUrl, "EUC-JP").mkString).toList.
-    map("http://db.netkeiba.com" + _).
+    map("https://db.netkeiba.com" + _).
     distinct
   }
  
@@ -283,18 +287,18 @@ object RaceListScraper {
     "/\\?pid=[^\"]+".r.findFirstIn(
       io.Source.fromURL(baseList, "EUC-JP").
       getLines.filter(_.contains("race_calendar_rev_02.gif")).toList.head).
-    map("http://db.netkeiba.com" + _).
+    map("https://db.netkeiba.com" + _).
     get
   }
  
   def extractRace(listUrl: String) = {
     "/race/\\d+/".r.findAllIn(io.Source.fromURL(listUrl, "EUC-JP").mkString).toList.
-    map("http://db.netkeiba.com" + _).
+    map("https://db.netkeiba.com" + _).
     distinct
   }
  
   def scrape(period: Int) = {
-    var baseUrl = "http://db.netkeiba.com/?pid=race_top"
+    var baseUrl = "https://db.netkeiba.com/?pid=race_top"
     var i = 0
  
     while (i < period) {
@@ -433,6 +437,7 @@ case class RaceResult(
   frame_number: Int,
   horse_number: Int,
   horse_id: String,
+  horse_name: String,
   sex: String,
   age: Int,
   basis_weight: Double,
@@ -481,6 +486,7 @@ create table if not exists race_result (
   frame_number       integer not null,
   horse_number       integer not null,
   horse_id           text    not null,
+  horse_name         text    not null,
   sex                text    not null,
   age                integer not null,
   basis_weight       real    not null,
@@ -547,6 +553,7 @@ insert or replace into race_result (
   frame_number,
   horse_number,
   horse_id,
+  horse_name,
   sex,
   age,
   basis_weight,
@@ -571,6 +578,7 @@ insert or replace into race_result (
   ${rr.frame_number},
   ${rr.horse_number},
   ${rr.horse_id},
+  ${rr.horse_name},
   ${rr.sex},
   ${rr.age},
   ${rr.basis_weight},
@@ -1971,7 +1979,7 @@ object Main {
     args.headOption match {
       case Some("collecturl") => 
         //過去10年分のURLを収集する
-        RaceListScraper.scrape(period = 12 * 10)
+        RaceListScraper.scrape(period = 12 * 13)
       case Some("scrapehtml") => 
         RaceScraper.scrape()
       case Some("extract") => 
@@ -1979,7 +1987,7 @@ object Main {
         DB.localTx { implicit s =>
           RaceInfoDao.createTable()
           RaceResultDao.createTable()
-	  PayoffDao.createTable()
+          PayoffDao.createTable()
           RowExtractor.extract()
         }
       case Some("genfeature") =>
