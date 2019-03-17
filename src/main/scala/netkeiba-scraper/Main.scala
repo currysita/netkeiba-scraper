@@ -5,9 +5,11 @@ import org.openqa.selenium.WebElement
 import org.apache.commons.io.FileUtils
 import java.lang.Thread
 import java.text.SimpleDateFormat
+
 import util.Try
 import java.util.Date
 import java.util.Calendar
+
 import scala.xml.parsing.NoBindingFactoryAdapter
 import org.xml.sax.InputSource
 import nu.validator.htmlparser.sax.HtmlParser
@@ -16,7 +18,11 @@ import org.apache.commons.io.FileUtils
 import org.apache.commons.io.FilenameUtils
 import java.io.File
 import java.io.StringReader
-import scalikejdbc._, SQLInterpolation._
+
+import scalikejdbc._
+import SQLInterpolation._
+
+import scala.util.matching.Regex
  
 object RaceScraper {
  
@@ -81,6 +87,14 @@ object RowExtractor {
   def str2raceResult(race_id: Int, race_result: Array[String]): RaceResult = {
     val horse_id = race_result(3).split("horse/")(1).takeWhile(_ != '/'); //hourse_id
     val horse_name = race_result(3).split(">")(1).takeWhile(_ != '<') //horse_name
+    val finishing_time_array = race_result(8).split(":")
+    var finishing_time_second = """"""
+    if(finishing_time_array.length == 2){
+      val minute = finishing_time_array(0).toDouble
+      val second = finishing_time_array(1).toDouble
+      finishing_time_second = (minute * 60 + second).toString
+    }
+
     RaceResult(
       race_id,
       race_result(0),  //order_of_finish
@@ -88,11 +102,12 @@ object RowExtractor {
 	    race_result(2).toInt,  //horse_number
       horse_id,
       horse_name,
-      race_result(4),
-	    race_result(5).toInt,
-	    race_result(6).toDouble,
-	    race_result(7).split("jockey/")(1).takeWhile(_ != '/'),
-	    race_result(8),
+      race_result(4), //sex
+	    race_result(5).toInt, //age
+	    race_result(6).toDouble,  //basic_weight
+	    race_result(7).split("jockey/")(1).takeWhile(_ != '/'), //jockey_id
+	    race_result(8), //finishing_time
+      finishing_time_second, //finishing_time を秒数の文字列化
 	    race_result(9),
 	    Try(race_result(10).toInt).toOption,
 	    race_result(11),
@@ -144,6 +159,8 @@ object RowExtractor {
       //以下のデータは壊れているので除外する。恐らくnetkeiba.comの不具合。
       filter(file => FilenameUtils.getBaseName(file.getName) != "200808020398").
       filter(file => FilenameUtils.getBaseName(file.getName) != "200808020399").
+        filter(file => FilenameUtils.getBaseName(file.getName) != "200706010508").
+        filter(file => FilenameUtils.getBaseName(file.getName) != "201606040606").
       toArray.
       reverse
  
@@ -443,6 +460,7 @@ case class RaceResult(
   basis_weight: Double,
   jockey_id: String,
   finishing_time: String,
+  finishing_time_second: String,
   length: String,
   speed_figure: Option[Int],
   pass: String,
@@ -456,12 +474,12 @@ case class RaceResult(
   owner_id: String,
   earning_money: Option[Double]
 )
- 
+
 object DateRe {
-  
+
   val dateRe =
     "(\\d\\d\\d\\d)年(\\d\\d?)月(\\d\\d?)日".r
- 
+
   def unapply(s: String) = {
     s match {
       case dateRe(y, m, d) =>
@@ -472,9 +490,9 @@ object DateRe {
         None
     }
   }
-  
+
 }
- 
+
 object RaceResultDao {
 
   def createTable()(implicit s: DBSession) = {
@@ -492,6 +510,7 @@ create table if not exists race_result (
   basis_weight       real    not null,
   jockey_id          text    not null,
   finishing_time     text    not null,
+  finishing_time_second real  not null,
   length             text    not null,
   speed_figure       integer,
   pass               text    not null,
@@ -509,46 +528,45 @@ create table if not exists race_result (
 );""".execute.apply
 
     sql"""
-create index 
-  race_id_idx 
+create index
+  race_id_idx
 on
   race_result (race_id);
 """.execute.apply
 
     sql"""
-create index 
-  race_id_horse_id_idx 
+create index
+  race_id_horse_id_idx
 on
   race_result (race_id, horse_id);
 """.execute.apply
 
     sql"""
-create index 
-  race_id_jockey_id_idx 
+create index
+  race_id_jockey_id_idx
 on
   race_result (race_id, jockey_id);
 """.execute.apply
 
     sql"""
-create index 
-  race_id_trainer_id_idx 
+create index
+  race_id_trainer_id_idx
 on
   race_result (race_id, trainer_id);
 """.execute.apply
 
     sql"""
-create index 
-  race_id_owner_id_idx 
+create index
+  race_id_owner_id_idx
 on
   race_result (race_id, owner_id);
 """.execute.apply
   }
-    
+
   def insert(rr: RaceResult)(implicit s: DBSession) = {
     sql"""
 insert or replace into race_result (
   race_id,
-  
   order_of_finish,
   frame_number,
   horse_number,
@@ -559,6 +577,7 @@ insert or replace into race_result (
   basis_weight,
   jockey_id,
   finishing_time,
+  finishing_time_second,
   length,
   speed_figure,
   pass,
@@ -584,6 +603,7 @@ insert or replace into race_result (
   ${rr.basis_weight},
   ${rr.jockey_id},
   ${rr.finishing_time},
+  ${rr.finishing_time_second},
   ${rr.length},
   ${rr.speed_figure},
   ${rr.pass},
