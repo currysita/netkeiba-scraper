@@ -1,0 +1,9 @@
+# Set the java args to high
+# -Dfile.encoding=UTF-8
+-Xmx1024M
+
+# -XX:MaxPermSize=256m
+-XX:ReservedCodeCacheSize=240m
+
+# Set the extra SBT options
+-Dsbt.log.format=true
