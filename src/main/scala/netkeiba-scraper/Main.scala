@@ -5,9 +5,11 @@ import org.openqa.selenium.WebElement
 import org.apache.commons.io.FileUtils
 import java.lang.Thread
 import java.text.SimpleDateFormat
+
 import util.Try
 import java.util.Date
 import java.util.Calendar
+
 import scala.xml.parsing.NoBindingFactoryAdapter
 import org.xml.sax.InputSource
 import nu.validator.htmlparser.sax.HtmlParser
@@ -16,7 +18,11 @@ import org.apache.commons.io.FileUtils
 import org.apache.commons.io.FilenameUtils
 import java.io.File
 import java.io.StringReader
-import scalikejdbc._, SQLInterpolation._
+
+import scalikejdbc._
+import SQLInterpolation._
+
+import scala.util.matching.Regex
  
 object RaceScraper {
  
@@ -38,7 +44,7 @@ object RaceScraper {
       io.Source.fromFile("race_url.txt").getLines.toList.
     map{ s => val re(x) = re.findFirstIn(s).get; x }
  
-    val urls = nums.map(s => "http://db.netkeiba.com/race/" + s)
+    val urls = nums.map(s => "https://db.netkeiba.com/race/" + s)
  
     val folder = new File("html")
     if (!folder.exists()) folder.mkdir()
@@ -78,31 +84,44 @@ object RowExtractor {
 	 race_info(10))
   }
  
-  def str2raceResult(race_id: Int, race_result: Array[String]): RaceResult = { 
-    RaceResult(race_id,
-	 race_result(0),
-	 race_result(1).toInt,
-	 race_result(2).toInt,
-	 race_result(3).split("horse/")(1).takeWhile(_ != '/'),
-	 race_result(4),
-	 race_result(5).toInt,
-	 race_result(6).toDouble,
-	 race_result(7).split("jockey/")(1).takeWhile(_ != '/'),
-	 race_result(8),
-	 race_result(9),
-	 Try(race_result(10).toInt).toOption,
-	 race_result(11),
-	 Try(race_result(12).toDouble).toOption,
-	 Try(race_result(13).toDouble).toOption,
-	 Try(race_result(14).toInt).toOption,
-	 race_result(15),
-	 { val remark = race_result(18)
+  def str2raceResult(race_id: Int, race_result: Array[String]): RaceResult = {
+    val horse_id = race_result(3).split("horse/")(1).takeWhile(_ != '/'); //hourse_id
+    val horse_name = race_result(3).split(">")(1).takeWhile(_ != '<') //horse_name
+    val finishing_time_array = race_result(8).split(":")
+    var finishing_time_second = """"""
+    if(finishing_time_array.length == 2){
+      val minute = finishing_time_array(0).toDouble
+      val second = finishing_time_array(1).toDouble
+      finishing_time_second = (minute * 60 + second).toString
+    }
+
+    RaceResult(
+      race_id,
+      race_result(0),  //order_of_finish
+	    race_result(1).toInt,  //frame_number
+	    race_result(2).toInt,  //horse_number
+      horse_id,
+      horse_name,
+      race_result(4), //sex
+	    race_result(5).toInt, //age
+	    race_result(6).toDouble,  //basic_weight
+	    race_result(7).split("jockey/")(1).takeWhile(_ != '/'), //jockey_id
+	    race_result(8), //finishing_time
+      finishing_time_second, //finishing_time を秒数の文字列化
+	    race_result(9),
+	    Try(race_result(10).toInt).toOption,
+	    race_result(11),
+	    Try(race_result(12).toDouble).toOption,
+	    Try(race_result(13).toDouble).toOption,
+	    Try(race_result(14).toInt).toOption,
+	    race_result(15),
+	    { val remark = race_result(18)
            if (remark.isEmpty) None else Some(remark) },
-	 race_result(19),
-	 race_result(20).split("trainer/")(1).takeWhile(_ != '/'),
-	 race_result(21).split("owner/")(1).takeWhile(_ != '/'),
-	 Try(race_result(22).toDouble).toOption
-       )
+	    race_result(19),
+	    race_result(20).split("trainer/")(1).takeWhile(_ != '/'),
+	    race_result(21).split("owner/")(1).takeWhile(_ != '/'),
+	    Try(race_result(22).toDouble).toOption
+    )
   }
 
   private def parseHtml(html: String) = {
@@ -140,6 +159,8 @@ object RowExtractor {
       //以下のデータは壊れているので除外する。恐らくnetkeiba.comの不具合。
       filter(file => FilenameUtils.getBaseName(file.getName) != "200808020398").
       filter(file => FilenameUtils.getBaseName(file.getName) != "200808020399").
+        filter(file => FilenameUtils.getBaseName(file.getName) != "200706010508").
+        filter(file => FilenameUtils.getBaseName(file.getName) != "201606040606").
       toArray.
       reverse
  
@@ -275,7 +296,7 @@ object RaceListScraper {
   
   def extractRaceList(baseUrl: String) = {
     "/race/list/\\d+/".r.findAllIn(io.Source.fromURL(baseUrl, "EUC-JP").mkString).toList.
-    map("http://db.netkeiba.com" + _).
+    map("https://db.netkeiba.com" + _).
     distinct
   }
  
@@ -283,18 +304,18 @@ object RaceListScraper {
     "/\\?pid=[^\"]+".r.findFirstIn(
       io.Source.fromURL(baseList, "EUC-JP").
       getLines.filter(_.contains("race_calendar_rev_02.gif")).toList.head).
-    map("http://db.netkeiba.com" + _).
+    map("https://db.netkeiba.com" + _).
     get
   }
  
   def extractRace(listUrl: String) = {
     "/race/\\d+/".r.findAllIn(io.Source.fromURL(listUrl, "EUC-JP").mkString).toList.
-    map("http://db.netkeiba.com" + _).
+    map("https://db.netkeiba.com" + _).
     distinct
   }
  
   def scrape(period: Int) = {
-    var baseUrl = "http://db.netkeiba.com/?pid=race_top"
+    var baseUrl = "https://db.netkeiba.com/?pid=race_top"
     var i = 0
  
     while (i < period) {
@@ -433,11 +454,13 @@ case class RaceResult(
   frame_number: Int,
   horse_number: Int,
   horse_id: String,
+  horse_name: String,
   sex: String,
   age: Int,
   basis_weight: Double,
   jockey_id: String,
   finishing_time: String,
+  finishing_time_second: String,
   length: String,
   speed_figure: Option[Int],
   pass: String,
@@ -451,12 +474,12 @@ case class RaceResult(
   owner_id: String,
   earning_money: Option[Double]
 )
- 
+
 object DateRe {
-  
+
   val dateRe =
     "(\\d\\d\\d\\d)年(\\d\\d?)月(\\d\\d?)日".r
- 
+
   def unapply(s: String) = {
     s match {
       case dateRe(y, m, d) =>
@@ -467,9 +490,9 @@ object DateRe {
         None
     }
   }
-  
+
 }
- 
+
 object RaceResultDao {
 
   def createTable()(implicit s: DBSession) = {
@@ -481,11 +504,13 @@ create table if not exists race_result (
   frame_number       integer not null,
   horse_number       integer not null,
   horse_id           text    not null,
+  horse_name         text    not null,
   sex                text    not null,
   age                integer not null,
   basis_weight       real    not null,
   jockey_id          text    not null,
   finishing_time     text    not null,
+  finishing_time_second real  not null,
   length             text    not null,
   speed_figure       integer,
   pass               text    not null,
@@ -503,55 +528,56 @@ create table if not exists race_result (
 );""".execute.apply
 
     sql"""
-create index 
-  race_id_idx 
+create index
+  race_id_idx
 on
   race_result (race_id);
 """.execute.apply
 
     sql"""
-create index 
-  race_id_horse_id_idx 
+create index
+  race_id_horse_id_idx
 on
   race_result (race_id, horse_id);
 """.execute.apply
 
     sql"""
-create index 
-  race_id_jockey_id_idx 
+create index
+  race_id_jockey_id_idx
 on
   race_result (race_id, jockey_id);
 """.execute.apply
 
     sql"""
-create index 
-  race_id_trainer_id_idx 
+create index
+  race_id_trainer_id_idx
 on
   race_result (race_id, trainer_id);
 """.execute.apply
 
     sql"""
-create index 
-  race_id_owner_id_idx 
+create index
+  race_id_owner_id_idx
 on
   race_result (race_id, owner_id);
 """.execute.apply
   }
-    
+
   def insert(rr: RaceResult)(implicit s: DBSession) = {
     sql"""
 insert or replace into race_result (
   race_id,
-  
   order_of_finish,
   frame_number,
   horse_number,
   horse_id,
+  horse_name,
   sex,
   age,
   basis_weight,
   jockey_id,
   finishing_time,
+  finishing_time_second,
   length,
   speed_figure,
   pass,
@@ -571,11 +597,13 @@ insert or replace into race_result (
   ${rr.frame_number},
   ${rr.horse_number},
   ${rr.horse_id},
+  ${rr.horse_name},
   ${rr.sex},
   ${rr.age},
   ${rr.basis_weight},
   ${rr.jockey_id},
   ${rr.finishing_time},
+  ${rr.finishing_time_second},
   ${rr.length},
   ${rr.speed_figure},
   ${rr.pass},
@@ -1737,7 +1765,7 @@ insert or replace into feature (
       val fgs = 
         FeatureGenerator.iterator()
       fgs.grouped(1000).foreach{ fgs =>
-        //1000回インサートする度にコミットする
+        //指定回数インサートする度にコミットする。xmxを高くできるなら、10000でコミットでもいいと思う。
         DB.localTx{ implicit s =>
           fgs.foreach(FeatureDao.insert)
         }
@@ -1971,7 +1999,7 @@ object Main {
     args.headOption match {
       case Some("collecturl") => 
         //過去10年分のURLを収集する
-        RaceListScraper.scrape(period = 12 * 10)
+        RaceListScraper.scrape(period = 12 * 13)
       case Some("scrapehtml") => 
         RaceScraper.scrape()
       case Some("extract") => 
@@ -1979,7 +2007,7 @@ object Main {
         DB.localTx { implicit s =>
           RaceInfoDao.createTable()
           RaceResultDao.createTable()
-	  PayoffDao.createTable()
+          PayoffDao.createTable()
           RowExtractor.extract()
         }
       case Some("genfeature") =>
